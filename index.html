@@ -345,7 +345,7 @@
     text-shadow:none;
   }
   #panel h2::after{
-    content:'BOBCAT 0.0.2';
+    content:'BOBCAT 0.0.3';
     font-size:10px;
     color:var(--p-dim);
     font-weight:500;
@@ -849,7 +849,7 @@
   <div id="load-percent">0%</div>
   <button id="load-start">CLICK&nbsp;TO&nbsp;START</button>
   <div id="load-log"></div>
-  <div id="load-build">BOBCAT · v0.0.2</div>
+  <div id="load-build">BOBCAT · v0.0.3</div>
 </div>
 
 <!-- HUD -->
@@ -890,7 +890,7 @@
 <!-- Settings panel -->
 <aside id="panel">
   <h2>Dev Panel</h2>
-  <div class="sub">edition 0.0.2</div>
+  <div class="sub">edition 0.0.3</div>
 
   <div class="panel-section">
     <h3>Theme</h3>
@@ -1517,8 +1517,22 @@ function noise(x, z, seed){
   return h;
 }
 let hSeed = Math.random()*1000;
+let flatZone = null;
 function gH(x, z){
   if(C.roughness === 0) return 0;
+  if(flatZone){
+    const dx = Math.abs(x - flatZone.x);
+    const dz = Math.abs(z - flatZone.z);
+    if(dx < flatZone.half && dz < flatZone.half) return flatZone.y;
+    const fade = flatZone.half + flatZone.blend;
+    if(dx < fade && dz < fade){
+      const t = Math.max((dx - flatZone.half) / flatZone.blend, (dz - flatZone.half) / flatZone.blend);
+      const k = Math.max(0, Math.min(1, t));
+      const smooth = k*k*(3 - 2*k);
+      const raw = noise(x, z, hSeed) * C.roughness;
+      return flatZone.y * (1 - smooth) + raw * smooth;
+    }
+  }
   const n = noise(x, z, hSeed);
   return n * C.roughness;
 }
@@ -1648,6 +1662,11 @@ function bGrid(){
 }
 
 function sH(x, z){
+  if(B && B.pos){
+    const dx = Math.abs(x - B.pos.x);
+    const dz = Math.abs(z - B.pos.z);
+    if(dx < 4.0 && dz < 4.0) return B.padTopY;
+  }
   if(C.roughness === 0) return 0;
   return gH(x, z);
 }
@@ -2699,6 +2718,7 @@ function bBase(){
     W.remove(B.mesh);
     B = null;
   }
+  flatZone = null;
   const root = new THREE.Group();
 
   const padGeo = new THREE.BoxGeometry(8, 0.4, 8);
@@ -2712,7 +2732,7 @@ function bBase(){
   const garageGeo = new THREE.BoxGeometry(5.2, 3.2, 3.2);
   const garageMat = tMat(0x6a6048);
   const garage = new THREE.Mesh(garageGeo, garageMat);
-  garage.position.set(0, 1.85, -2.0);
+  garage.position.set(0, 1.85+0.4, -2.0);
   garage.castShadow = true; garage.receiveShadow = true;
   outl(garage, 1.04);
   root.add(garage);
@@ -2720,85 +2740,108 @@ function bBase(){
   const poleGeo = new THREE.CylinderGeometry(0.1, 0.1, 4.4, 6);
   const poleMat = tMat(0x2a2530);
   const pole = new THREE.Mesh(poleGeo, poleMat);
-  pole.position.set(0, 2.6, 0.6);
+  pole.position.set(0, 2.6+0.4, 0.6);
   pole.castShadow = true;
   root.add(pole);
 
   const flagGeo = new THREE.PlaneGeometry(1.6, 1.0);
   const flagMat = new THREE.MeshBasicMaterial({color: 0xc83a28, side: THREE.DoubleSide});
   const flag = new THREE.Mesh(flagGeo, flagMat);
-  flag.position.set(0.85, 4.2, 0.6);
+  flag.position.set(0.85, 4.2+0.4, 0.6);
   root.add(flag);
 
   const halfMap = C.mapSize/2 - 10;
-  const padHalf = 4.2;
+  const padHalf = 4.0;
 
-  function padIsDry(cx, cz){
+  function padDryRaw(cx, cz){
 
-    for(let dx=-padHalf; dx<=padHalf; dx+=padHalf){
-      for(let dz=-padHalf; dz<=padHalf; dz+=padHalf){
-        if(gH(cx+dx, cz+dz) < C.waterLevel + 0.4) return false;
-      }
+    const samples = [
+      [cx-padHalf, cz-padHalf], [cx+padHalf, cz-padHalf],
+      [cx-padHalf, cz+padHalf], [cx+padHalf, cz+padHalf],
+      [cx, cz]
+    ];
+    let mn = Infinity, mx = -Infinity;
+    for(const [sx, sz] of samples){
+      if(C.roughness === 0){ mn = Math.min(mn, 0); mx = Math.max(mx, 0); continue; }
+      const h = noise(sx, sz, hSeed) * C.roughness;
+      if(h < C.waterLevel + 0.4) return null;
+      if(h < mn) mn = h;
+      if(h > mx) mx = h;
     }
-    return true;
+
+    if(mx - mn > 1.4) return null;
+    return mx;
   }
 
   const pos = new THREE.Vector3(0, 0, -halfMap);
   let found = false;
+  let chosenH = 0;
 
-  for(let i=0;i<60 && !found;i++){
+  for(let i=0;i<80 && !found;i++){
     const cx = (Math.random()-0.5) * (C.mapSize - 24);
     const cz = -halfMap + (Math.random()-0.5) * 6;
-    if(padIsDry(cx, cz)){
+    const h = padDryRaw(cx, cz);
+    if(h !== null){
       pos.set(cx, 0, cz);
+      chosenH = h;
       found = true;
     }
   }
 
   if(!found){
-    for(let i=0;i<200 && !found;i++){
+    for(let i=0;i<300 && !found;i++){
       const cx = (Math.random()-0.5) * (C.mapSize - 24);
       const cz = -C.mapSize/2 + 14 + Math.random()*(C.mapSize/3);
-      if(padIsDry(cx, cz)){
+      const h = padDryRaw(cx, cz);
+      if(h !== null){
         pos.set(cx, 0, cz);
+        chosenH = h;
         found = true;
       }
     }
   }
 
   if(!found){
-    for(let i=0;i<400 && !found;i++){
+
+    for(let i=0;i<600 && !found;i++){
       const cx = (Math.random()-0.5) * (C.mapSize - 24);
       const cz = (Math.random()-0.5) * (C.mapSize - 24);
-      if(padIsDry(cx, cz)){
+      let mn=Infinity, mx=-Infinity, dry=true;
+      const ss=[[cx-padHalf,cz-padHalf],[cx+padHalf,cz-padHalf],[cx-padHalf,cz+padHalf],[cx+padHalf,cz+padHalf]];
+      for(const [sx,sz] of ss){
+        const h = C.roughness===0 ? 0 : noise(sx,sz,hSeed)*C.roughness;
+        if(h < C.waterLevel + 0.4){ dry=false; break; }
+        if(h<mn) mn=h; if(h>mx) mx=h;
+      }
+      if(dry){
         pos.set(cx, 0, cz);
+        chosenH = (mn + mx) / 2;
         found = true;
       }
     }
   }
 
-  let maxH = -Infinity;
-  for(let dx=-padHalf; dx<=padHalf; dx+=padHalf){
-    for(let dz=-padHalf; dz<=padHalf; dz+=padHalf){
-      const h = sH(pos.x+dx, pos.z+dz);
-      if(h > maxH) maxH = h;
-    }
-  }
-  pos.y = Math.max(maxH, C.waterLevel + 0.5);
+  const groundY = Math.max(chosenH, C.waterLevel + 0.5);
+  flatZone = { x: pos.x, z: pos.z, y: groundY, half: padHalf, blend: 2.5 };
+
+  pos.y = groundY;
   root.position.copy(pos);
   W.add(root);
 
   B = {
     mesh: root,
-    pos: pos,
+    pos,
+    padTopY: groundY + 0.4,
     hp: C.basementHP,
     maxHp: C.basementHP,
     alive: true,
+    destroyed: false,
     rebuildTimer: 0,
-
     garageMin: new THREE.Vector3(pos.x - 2.6, 0, pos.z - 3.6),
     garageMax: new THREE.Vector3(pos.x + 2.6, 0, pos.z - 0.4),
   };
+
+  bTerr();
 }
 
 function dmgB(dmg){
@@ -3522,7 +3565,9 @@ function appSky(){
 
 function newM(){
   hSeed = Math.random()*1000;
+  flatZone = null;
   bTerr();
+  if(B) bBase();
   bObs();
   for(const t of T){
     t.pos.y = sH(t.pos.x, t.pos.z);
