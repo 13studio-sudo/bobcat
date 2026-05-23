@@ -345,7 +345,7 @@
     text-shadow:none;
   }
   #panel h2::after{
-    content:'BOBCAT 0.0.3';
+    content:'BOBCAT 0.0.8';
     font-size:10px;
     color:var(--p-dim);
     font-weight:500;
@@ -849,7 +849,7 @@
   <div id="load-percent">0%</div>
   <button id="load-start">CLICK&nbsp;TO&nbsp;START</button>
   <div id="load-log"></div>
-  <div id="load-build">BOBCAT · v0.0.3</div>
+  <div id="load-build">BOBCAT · v0.0.8</div>
 </div>
 
 <!-- HUD -->
@@ -890,7 +890,7 @@
 <!-- Settings panel -->
 <aside id="panel">
   <h2>Dev Panel</h2>
-  <div class="sub">edition 0.0.3</div>
+  <div class="sub">edition 0.0.8</div>
 
   <div class="panel-section">
     <h3>Theme</h3>
@@ -1086,6 +1086,18 @@
   </div>
 
   <div class="panel-section">
+    <h3>Camera</h3>
+    <div class="field">
+      <label>Offset X <span class="val" id="v-coffx">20.0</span></label>
+      <input type="range" id="i-coffx" min="-20" max="30" step="0.5" value="20.0" />
+    </div>
+    <div class="field">
+      <label>Offset Z <span class="val" id="v-coffz">-1.5</span></label>
+      <input type="range" id="i-coffz" min="-20" max="20" step="0.5" value="-1.5" />
+    </div>
+  </div>
+
+  <div class="panel-section">
     <h3>HP Bar</h3>
     <div class="field">
       <label>Show <span class="val" id="v-hpon">On</span></label>
@@ -1250,6 +1262,8 @@ const C = {
   masterVol: 0.8,
   sfxVolMaster: 0.7,
   sfxEnabled: true,
+  camOffsetX: 20,
+  camOffsetZ: -1.5,
 };
 
 const PAL = {
@@ -2750,75 +2764,20 @@ function bBase(){
   flag.position.set(0.85, 4.2+0.4, 0.6);
   root.add(flag);
 
-  const halfMap = C.mapSize/2 - 10;
   const padHalf = 4.0;
 
-  function padDryRaw(cx, cz){
+  const pos = new THREE.Vector3(0, 0, -5);
+  let chosenH = 0;
 
-    const samples = [
-      [cx-padHalf, cz-padHalf], [cx+padHalf, cz-padHalf],
-      [cx-padHalf, cz+padHalf], [cx+padHalf, cz+padHalf],
-      [cx, cz]
-    ];
-    let mn = Infinity, mx = -Infinity;
-    for(const [sx, sz] of samples){
-      if(C.roughness === 0){ mn = Math.min(mn, 0); mx = Math.max(mx, 0); continue; }
-      const h = noise(sx, sz, hSeed) * C.roughness;
-      if(h < C.waterLevel + 0.4) return null;
+  if(C.roughness > 0){
+    const ss = [[-padHalf,-padHalf],[padHalf,-padHalf],[-padHalf,padHalf],[padHalf,padHalf],[0,0]];
+    let mn=Infinity, mx=-Infinity;
+    for(const [sx, sz] of ss){
+      const h = noise(pos.x+sx, pos.z+sz, hSeed) * C.roughness;
       if(h < mn) mn = h;
       if(h > mx) mx = h;
     }
-
-    if(mx - mn > 1.4) return null;
-    return mx;
-  }
-
-  const pos = new THREE.Vector3(0, 0, -halfMap);
-  let found = false;
-  let chosenH = 0;
-
-  for(let i=0;i<80 && !found;i++){
-    const cx = (Math.random()-0.5) * (C.mapSize - 24);
-    const cz = -halfMap + (Math.random()-0.5) * 6;
-    const h = padDryRaw(cx, cz);
-    if(h !== null){
-      pos.set(cx, 0, cz);
-      chosenH = h;
-      found = true;
-    }
-  }
-
-  if(!found){
-    for(let i=0;i<300 && !found;i++){
-      const cx = (Math.random()-0.5) * (C.mapSize - 24);
-      const cz = -C.mapSize/2 + 14 + Math.random()*(C.mapSize/3);
-      const h = padDryRaw(cx, cz);
-      if(h !== null){
-        pos.set(cx, 0, cz);
-        chosenH = h;
-        found = true;
-      }
-    }
-  }
-
-  if(!found){
-
-    for(let i=0;i<600 && !found;i++){
-      const cx = (Math.random()-0.5) * (C.mapSize - 24);
-      const cz = (Math.random()-0.5) * (C.mapSize - 24);
-      let mn=Infinity, mx=-Infinity, dry=true;
-      const ss=[[cx-padHalf,cz-padHalf],[cx+padHalf,cz-padHalf],[cx-padHalf,cz+padHalf],[cx+padHalf,cz+padHalf]];
-      for(const [sx,sz] of ss){
-        const h = C.roughness===0 ? 0 : noise(sx,sz,hSeed)*C.roughness;
-        if(h < C.waterLevel + 0.4){ dry=false; break; }
-        if(h<mn) mn=h; if(h>mx) mx=h;
-      }
-      if(dry){
-        pos.set(cx, 0, cz);
-        chosenH = (mn + mx) / 2;
-        found = true;
-      }
-    }
+    chosenH = (mn + mx) / 2;
   }
 
   const groundY = Math.max(chosenH, C.waterLevel + 0.5);
@@ -3578,9 +3537,12 @@ function newM(){
 function upCam(dt){
   const player = T.find(t=>t.isPlayer);
   if(player && player.alive){
-    const tgt = new THREE.Vector3(player.pos.x, 0, player.pos.z);
-    if(cR.snap){ cR.target.copy(tgt); cR.snap = false; }
-    else cR.target.lerp(tgt, Math.min(1, dt*6));
+    cR.target.set(
+      player.pos.x + C.camOffsetX,
+      player.pos.y + 1.0,
+      player.pos.z + C.camOffsetZ
+    );
+    cR.snap = false;
   } else if(T.length){
 
     let cx=0, cz=0, n=0;
@@ -4043,6 +4005,21 @@ document.documentElement.style.setProperty('--font-scale', C.fontScale);
 $('v-bw').textContent = C.borderW+'px';
 $('i-bw').value = C.borderW;
 
+(function wireCam(){
+  const cx = $('i-coffx'), cxL = $('v-coffx');
+  cx.value = C.camOffsetX; cxL.textContent = C.camOffsetX.toFixed(1);
+  cx.addEventListener('input', ()=>{
+    C.camOffsetX = parseFloat(cx.value);
+    cxL.textContent = C.camOffsetX.toFixed(1);
+  });
+  const cz = $('i-coffz'), czL = $('v-coffz');
+  cz.value = C.camOffsetZ; czL.textContent = C.camOffsetZ.toFixed(1);
+  cz.addEventListener('input', ()=>{
+    C.camOffsetZ = parseFloat(cz.value);
+    czL.textContent = C.camOffsetZ.toFixed(1);
+  });
+})();
+
 (function wireHpBar(){
   const ln = $('i-hpln'), lnLbl = $('v-hpln');
   ln.value = C.hpBarLen; lnLbl.textContent = C.hpBarLen.toFixed(1);
@@ -4175,6 +4152,10 @@ runLS();
 
 window.C = C;
 window.T = T;
+window.cR = cR;
+window.cam = cam;
+window.B = B;
+window.spwT = spwT;
 </script>
 
 </body>
